@@ -195,7 +195,11 @@ class Daemon:
                         log.warning('Got connection refused')
                         self.teardown_socket()
                     else:
-                        self.connect()
+                        try:
+                            self.connect()
+                        except IOError as e:
+                            log.critical(f'Error during handshake: {str(e)}')
+                            self.teardown_socket()
                 else:
                     log.info('No connection, sleeping before retry')
                     try:
@@ -353,6 +357,7 @@ class Daemon:
 
         # TODO handle no password case
         self.write_command('c', self._settings.password)
+
         data = self.read()
         if not data:
             raise IOError('No data after sending password')

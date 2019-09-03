@@ -80,6 +80,8 @@ def cli():
         d.connect()
     except ConnectionRefusedError as e:
         log.warning(f'Got connection refused: {e}')
+    except IOError as e:
+        log.critical(f'IO Error: {e}')
 
     d.run()
 
