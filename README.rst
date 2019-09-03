@@ -10,7 +10,7 @@ The exporter connects to the ``status_port`` as if it was a monitoring client (s
 Quickstart
 **********
 
-To try it out, create a virtual environment and install it into it. Use a regualar burp client to create key and certificate. By default, the filenames are:
+To try it out, create a virtual environment and install it into it. Use a regular burp client to create key and certificate. By default, the filenames are:
 
 * ``ca.pem`` for the CA certificate
 * ``client.key`` containing the clients TLS key
@@ -24,3 +24,45 @@ To try it out, create a virtual environment and install it into it. Use a regual
     (venv) $ burp_exporter
 
 Then browse to `<http://127.0.0.1:9645>`_. If something doesn't work, raise the debug level using the ``-d`` switch.
+
+Example output
+**************
+Appart from the python metrics, these are exported right now:
+::
+
+    # HELP burp_last_contact Time when the burp server was last contacted
+    # TYPE burp_last_contact gauge
+    burp_last_contact 1.5674878997216787e+09
+    # HELP burp_contact_attempts_total Amount of times it was tried to establish a connection
+    # TYPE burp_contact_attempts_total counter
+    burp_contact_attempts_total 0.0
+    # HELP burp_up Shows if the connection to the server is up
+    # TYPE burp_up gauge
+    burp_up 1.0
+    # HELP burp_parse_errors_total Amount of time parsing the server response failed
+    # TYPE burp_parse_errors_total counter
+    burp_parse_errors_total 0.0
+    # HELP burp_clients Number of clients known to the server
+    # TYPE burp_clients gauge
+    burp_clients 3.0
+    # HELP burp_client_backup_num Number of the most recent backup for a client
+    # TYPE burp_client_backup_num gauge
+    burp_client_backup_num{name="burp"} 4.0
+    # HELP burp_client_backup_timestamp Timestamp of the most recent backup
+    # TYPE burp_client_backup_timestamp gauge
+    burp_client_backup_timestamp{name="burp"} 1.567146136e+09
+    # HELP burp_client_backup_log Presence of logs for the most recent backup
+    # TYPE burp_client_backup_log gauge
+    # HELP burp_client_backup_has_in_progress Indicates whether a backup with flag "working" is present
+    # TYPE burp_client_backup_has_in_progress gauge
+    burp_client_backup_has_in_progress{name="burp"} 0.0
+    # HELP burp_client_run_status Current run status of the client
+    # TYPE burp_client_run_status gauge
+    burp_client_run_status{burp_client_run_status="running",name="asdf"} 0.0
+    burp_client_run_status{burp_client_run_status="idle",name="asdf"} 1.0
+    burp_client_run_status{burp_client_run_status="running",name="burp"} 0.0
+    burp_client_run_status{burp_client_run_status="idle",name="burp"} 1.0
+    burp_client_run_status{burp_client_run_status="running",name="testclient"} 0.0
+    burp_client_run_status{burp_client_run_status="idle",name="testclient"} 1.0
+
+There are three idle clients (`asdf`, `burp` and `testclient`), of which only `burp` has backups (last complete one is number 4). `burp` also has a backup in state "working", most likely due to being interrupted during backup. Also, ``burp_up`` shows that the connection to the server is established.
