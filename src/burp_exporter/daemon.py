@@ -8,12 +8,11 @@ import socket
 import ssl
 import time
 from prometheus_client import start_http_server as prometheus_start_http_server
-from prometheus_client import Counter, Enum, Gauge
-from pydantic import ValidationError
-from typing import Optional, Set
+from typing import Optional
 
+from .metrics import SERVER_LAST_CONTACT, SERVER_UP
+from .parser import Parser
 from .settings import Settings
-from .types import ClientInfo
 
 log = logging.getLogger('burp_exporter.daemon')
 
@@ -28,22 +27,6 @@ except ImportError:
 
 #: Version of burp we're pretending to be
 BURP_CLIENT_VERSION = '2.1.28'
-
-# operational
-SERVER_LAST_CONTACT = Gauge('burp_last_contact', 'Time when the burp server was last contacted')
-SERVER_CONTACT_ATTEMPTS = Counter('burp_contact_attempts', 'Amount of times it was tried to establish a connection')
-SERVER_UP = Gauge('burp_up', 'Shows if the connection to the server is up')
-PARSE_ERRORS = Counter('burp_parse_errors', 'Amount of time parsing the server response failed')
-
-# statistics
-CLIENT_COUNT = Gauge('burp_clients', 'Number of clients known to the server')
-
-# clients
-CLIENT_BACKUP_NUM = Gauge('burp_client_backup_num', 'Number of the most recent backup for a client', ['name'])
-CLIENT_BACKUP_TIMESTAMP = Gauge('burp_client_backup_timestamp', 'Timestamp of the most recent backup', ['name'])
-CLIENT_BACKUP_LOGS = Gauge('burp_client_backup_log', 'Presence of logs for the most recent backup', ['name', 'log'])
-CLIENT_BACKUP_HAS_IN_PROGRESS = Gauge('burp_client_backup_has_in_progress', 'Indicates whether a backup with flag "working" is present', ['name'])
-CLIENT_RUN_STATUS = Enum('burp_client_run_status', 'Current run status of the client', ['name'], states=['running', 'idle'])
 
 
 class Daemon:
@@ -61,8 +44,8 @@ class Daemon:
         self._ts_last_connect_attempt = datetime.datetime.min
         # indicates if we have completed logging in to the burp server
         self._connected = False
-        # remember the client names
-        self._clients: Set[str] = set()
+        # parser and data storage
+        self._parser = Parser()
 
         # sanity checks
         if self._settings.bind_port <= 1024 or self._settings.bind_port > 65535:
@@ -82,10 +65,6 @@ class Daemon:
 
         # setup socket
         self._socket = None  # type: Optional[ssl.SSLSocket]
-
-    @property
-    def clients(self) -> Set[str]:
-        return self._clients
 
     def setup_socket(self) -> None:
         '''
@@ -224,7 +203,6 @@ class Daemon:
                 except KeyboardInterrupt:
                     log.info('Got keyboard interrupt, shutting down')
                     self._stop = True
-                CLIENT_COUNT.set(len(self._clients))
 
         log.info('Shutting down')
         if HAVE_SYSTEMD:
@@ -274,7 +252,7 @@ class Daemon:
                 except json.JSONDecodeError as e:
                     log.warning('Could not decode data: ' + str(e))
                     raise
-                self.parse_message(json_data)
+                self._parser.parse_message(json_data)
             elif mtype == 'w':
                 log.warning(f'Got warning: {mdata}')
             else:
@@ -284,54 +262,7 @@ class Daemon:
             if len(data) < 1:
                 log.debug('end of data')
                 break
-
-    def parse_message(self, message: dict) -> None:
-        '''
-        Parses a json message received from the server. Right now, only the ``clients`` list is understood, everything
-        else raises an exception.
-        '''
-        if 'clients' in message:
-            clients: Set[str] = set()
-            for client in message['clients']:
-                try:
-                    info = ClientInfo(**client)
-                except ValidationError as e:
-                    log.warning(f'Validation error: {str(e)}')
-                    PARSE_ERRORS.inc()
-                else:
-                    # TODO validate name
-                    clients.add(info.name)
-                    if info.name not in self._clients:
-                        log.debug(f'New client: {info.name}')
-                        self._clients.add(info.name)
-                    if info.backups:
-                        has_working = False
-                        for b in info.backups:
-                            if 'current' in b.flags:
-                                CLIENT_BACKUP_NUM.labels(name=info.name).set(b.number)
-                                CLIENT_BACKUP_TIMESTAMP.labels(name=info.name).set(b.timestamp)
-                            elif 'working' in b.flags:
-                                # TODO figure out what to do
-                                has_working = True
-                                pass
-                            # TODO logs
-                        CLIENT_BACKUP_HAS_IN_PROGRESS.labels(name=info.name).set(1 if has_working else 0)
-                    CLIENT_RUN_STATUS.labels(name=info.name).state(info.run_status)
-
-            # compile a list of clients that are no longer included in the server response
-            removed_clients = [x for x in self._clients if x not in clients]
-            for name in removed_clients:
-                try:
-                    CLIENT_BACKUP_NUM.remove(name)
-                    CLIENT_BACKUP_TIMESTAMP.remove(name)
-                    CLIENT_BACKUP_LOGS.remove(name)
-                    CLIENT_RUN_STATUS.remove(name)
-                except KeyError:
-                    pass
-                self._clients.remove(name)
-        else:
-            log.warning(f'Unknown message: {message}')
-            raise Exception('Unknown data')
+        self._parser.commit()
 
     def connect(self) -> None:
         '''
