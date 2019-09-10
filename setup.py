@@ -15,7 +15,7 @@ setup(
     package_dir={'': 'src'},
     include_package_data=True,
     zip_safe=False,
-    license='',
+    license='BSD-3-Clause',
     url='https://github.com/svalouch/burp_exporter',
     platforms='any',
     python_requires='>=3.6',
