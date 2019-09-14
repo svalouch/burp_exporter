@@ -132,7 +132,9 @@ tags
 # Persistent undo
 [._]*.un~
 
+# work files
 *.pem
 *.crt
 *.key
 *.cert
+config.yaml

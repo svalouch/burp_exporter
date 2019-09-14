@@ -1,0 +1,47 @@
+---
+
+# IP to bind the metrics endpoint to
+bind_address: 127.0.0.1
+#: Port to bind the metrics endpoint to
+bind_port: 9645
+
+# List of clients
+clients:
+    # name of the client, used as target parameter
+  - name: client1
+
+    ## Server settings
+
+    # Address of the burp server
+    burp_host: 127.0.0.1
+    # Monitor port
+    burp_port: 4972
+    # CName of the burp server
+    burp_cname: burpserver
+
+    ## Own settings
+
+    # Our own cname
+    cname: burp
+    # Our own password
+    password: abcdefgh
+
+    ## TLS
+
+    # File containing the ca certificate
+    tls_ca_cert: client1_ca.pem
+    # File containing the tls client certificate
+    tls_cert: client1.pem
+    # File containing the tls client key
+    tls_key: client1.key
+
+  - name: client2
+    burp_host: 192.168.0.1
+    burp_port: 4972
+    burp_cname: backup
+
+    cname: burp
+    password: correcthorsebatterystaple
+    tls_ca_cert: client2_ca.pem
+    tls_cert: client2.pem
+    tls_key: client2.key

@@ -23,6 +23,7 @@ setup(
     install_requires=[
         'prometheus_client>=0.6.0',
         'pydantic>=0.30.0',
+        'pyyaml>=3.12',
     ],
     extras_require={
         'dev': [

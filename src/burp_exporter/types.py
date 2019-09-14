@@ -31,3 +31,31 @@ class ClientInfo(BaseModel):
     protocol: int
     #: List of backups
     backups: List[BackupInfo]
+
+
+class ClientSettings(BaseModel):
+
+    #: Name of the client
+    name: str
+    #: Client CNAME
+    cname: str
+    #: Client password
+    password: str
+    #: How long between refresh cycles
+    refresh_interval_seconds: int = 60
+    #: Version we pretend to be
+    version: str = '2.1.18'
+
+    #: Address of the burp server
+    burp_host: str
+    #: Status port of the burp server
+    burp_port: int
+    #: CNAME of the burp server
+    burp_cname: str
+
+    #: CA certificate file
+    tls_ca_cert: str
+    #: Client certificate file
+    tls_cert: str
+    #: Client key file
+    tls_key: str
