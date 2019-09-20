@@ -32,6 +32,13 @@ class ClientInfo(BaseModel):
     #: List of backups
     backups: List[BackupInfo]
 
+    def __eq__(self, other) -> bool:
+        if type(other) == ClientInfo:
+            return self.name == other.name
+        elif type(other) == str:
+            return self.name == other
+        return False
+
 
 class ClientSettings(BaseModel):
 

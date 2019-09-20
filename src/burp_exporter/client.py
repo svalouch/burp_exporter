@@ -371,6 +371,10 @@ class Client:
                     if info.name not in self._clients:
                         self._log.debug(f'New client: {info.name}')
                         self._clients.append(info)
+                    else:
+                        self._log.debug(f'Updating client: {info.name}')
+                        # TODO meditate over performance
+                        self._clients = [info if cl.name == info.name else cl for cl in self._clients]
 
             self._log.debug(f'List before cleanup: {self._clients} | {clients}')
             # compile a list of clients that are no longer included in the server response
