@@ -12,11 +12,15 @@ from typing import List, Optional, Set
 
 from .types import ClientSettings, ClientInfo
 
+#: Default value if group_by_label is not None and the client does not have the label
+LABEL_DEFAULT = '--unknown--'
+
 
 class Client:
 
-    def __init__(self, config: ClientSettings) -> None:
+    def __init__(self, config: ClientSettings, group_by_label: Optional[str] = None) -> None:
         self._config = config
+        self._group_by_label = group_by_label
         self._log = logging.getLogger(f'burp_exporter.client.{self._config.name}')
         self._socket: Optional[ssl.SSLSocket] = None
         self._buf: bytes = b''
@@ -54,6 +58,10 @@ class Client:
     def refresh_interval(self) -> int:
         return self._config.refresh_interval_seconds
 
+    @property
+    def registry(self) -> CollectorRegistry:
+        return self._registry
+
     def refresh(self) -> None:
         '''
         Triggers a refresh by sending a command ("c:") to the server if the refresh interval has passed.
@@ -69,6 +77,7 @@ class Client:
         '''
         Custom collector endpoint.
         '''
+        self._log.debug(f'collect() with {len(self._clients)} clients')
         burp_last_contact = GaugeMetricFamily('burp_last_contact', 'Time when the burp server was last contacted', labels=['server'])
         burp_last_contact.add_metric([self.name], self._ts_last_query.replace(tzinfo=datetime.timezone.utc).timestamp())
         yield burp_last_contact
@@ -85,24 +94,37 @@ class Client:
         burp_clients.add_metric([self.name], len(self._clients))
         yield burp_clients
 
-        cl_backup_num = GaugeMetricFamily('burp_client_backup_num', 'Number of the most recent completed backup for a client', labels=['server', 'name'])
-        cl_backup_ts = GaugeMetricFamily('burp_client_backup_timestamp', 'Timestamp of the most recent backup', labels=['server', 'name'])
-        cl_backup_has_in_progress = GaugeMetricFamily('burp_client_backup_has_in_progress', 'Indicates whether a backup with flag "working" is present', labels=['server', 'name'])
-        cl_run_status = GaugeMetricFamily('burp_client_run_status', 'Current run status of the client', labels=['server', 'name', 'run_status'])
+        group_label = [self._group_by_label] if self._group_by_label is not None else []
+        cl_backup_num = GaugeMetricFamily('burp_client_backup_num', 'Number of the most recent completed backup for a client', labels=['server', 'name'] + group_label)
+        cl_backup_ts = GaugeMetricFamily('burp_client_backup_timestamp', 'Timestamp of the most recent backup', labels=['server', 'name'] + group_label)
+        cl_backup_has_in_progress = GaugeMetricFamily('burp_client_backup_has_in_progress', 'Indicates whether a backup with flag "working" is present', labels=['server', 'name'] + group_label)
+        cl_run_status = GaugeMetricFamily('burp_client_run_status', 'Current run status of the client', labels=['server', 'name', 'run_status'] + group_label)
 
         for clnt in self._clients:
             has_working = False
+
+            # handle grouping by label
+            lval = []
+            if self._group_by_label:
+                for l in clnt.labels:
+                    if l.startswith(f'{self._group_by_label}='):
+                        lval = [l.split('=', 1)[1]]
+                        break
+                if not lval:
+                    lval = [LABEL_DEFAULT]
+                self._log.debug(f'Label: {self._group_by_label} = "{lval[0]}"')
+
             for b in clnt.backups:
                 if 'current' in b.flags:
-                    cl_backup_num.add_metric([self.name, clnt.name], b.number)
-                    cl_backup_ts.add_metric([self.name, clnt.name], b.timestamp)
+                    cl_backup_num.add_metric([self.name, clnt.name] + lval, b.number)
+                    cl_backup_ts.add_metric([self.name, clnt.name] + lval, b.timestamp)
                 elif 'working' in b.flags:
                     # TODO figure out what to do
                     has_working = True
                 # TODO logs
-            cl_backup_has_in_progress.add_metric([self.name, clnt.name], 1 if has_working else 0)
-            cl_run_status.add_metric([self.name, clnt.name, 'running'], clnt.run_status == 'running')
-            cl_run_status.add_metric([self.name, clnt.name, 'idle'], clnt.run_status == 'idle')
+            cl_backup_has_in_progress.add_metric([self.name, clnt.name] + lval, 1 if has_working else 0)
+            cl_run_status.add_metric([self.name, clnt.name, 'running'] + lval, clnt.run_status == 'running')
+            cl_run_status.add_metric([self.name, clnt.name, 'idle'] + lval, clnt.run_status == 'idle')
 
         yield cl_backup_num
         yield cl_backup_ts
@@ -334,6 +356,7 @@ class Client:
         Parses a json message received from the server. Right now, only the ``clients`` list is understood, everything
         else raises an exception.
         '''
+        self._log.debug(f'parse_message: {message}')
         if 'clients' in message:
             clients: Set[str] = set()
             for client in message['clients']:
@@ -349,9 +372,9 @@ class Client:
                         self._log.debug(f'New client: {info.name}')
                         self._clients.append(info)
 
-            self._log.debug(f'List before cleanup: {self._clients}')
+            self._log.debug(f'List before cleanup: {self._clients} | {clients}')
             # compile a list of clients that are no longer included in the server response
-            self._clients = [x for x in self._clients if x.name not in clients]
+            self._clients = [x for x in self._clients if x.name in clients]
             self._log.debug(f'List after cleanup: {self._clients}')
 
         else:

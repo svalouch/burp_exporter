@@ -4,7 +4,7 @@ import logging
 import sys
 from pkg_resources import get_distribution
 
-from .daemon import Daemon
+from .daemon import Daemon, DAEMON
 
 __version__ = get_distribution('burp_exporter').version
 
@@ -28,17 +28,18 @@ by a regular burp(8) client.''')
 
 
 def cli():
+    global DAEMON
     args = setup_argparse().parse_args()
     log = setup_logging(args.debug)
 
     try:
-        d = Daemon(args.config)
+        DAEMON = Daemon(args.config)
     except Exception as e:
         log.critical(f'Error during setup: {str(e)}')
         print(str(e))
         sys.exit(1)
     else:
-        d.run()
+        DAEMON.run()
 
 
 def setup_logging(debug: bool = False) -> logging.Logger:

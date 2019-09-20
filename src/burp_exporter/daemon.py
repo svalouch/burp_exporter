@@ -5,10 +5,7 @@ import os
 import select
 import signal
 import yaml
-from prometheus_client import start_http_server as prometheus_start_http_server, MetricsHandler
-from socketserver import ThreadingMixIn
-from http.server import HTTPServer
-from urllib.parse import urlparse
+from prometheus_client import start_http_server as prometheus_start_http_server, MetricsHandler, generate_latest, CollectorRegistry
 from typing import List, Tuple
 
 from .client import Client
@@ -18,7 +15,7 @@ log = logging.getLogger('burp_exporter.daemon')
 
 
 try:
-    import systemd.daemon
+    import systemd.daemon  # type: ignore
     log.info('Systemd module detected')
     HAVE_SYSTEMD = True
 except ImportError:
@@ -30,32 +27,13 @@ class ConfigError(Exception):
     pass
 
 
-class ThreadingHTTPServer(ThreadingMixIn, HTTPServer):
-    pass
-
-
-class BurpHandler(MetricsHandler):
-    def do_GET(self):
-        path = urlparse(self.path).path
-        try:
-            if path == '/':
-                self.send_html()
-        except Exception as e:
-            self.send_error(500, str(e))
-
-    def send_html(self):
-        self.send_response(200)
-        self.send_header('Content-Type', 'text/html')
-        self.end_headers()
-        self.wfile.write('''<html><head><title>Burp Exporter</title></head><body><p>Hi!</p></body></html>''')
-
-
 class Daemon:
 
     def __init__(self, cfg_file: str, timeout: int = 5):
         log.info('Starting up')
 
         self._clients = list()  # type: List[Client]
+        self._registry = CollectorRegistry()
 
         cfg_path = os.path.expanduser(cfg_file)
         if not os.path.exists(cfg_path):
@@ -63,6 +41,8 @@ class Daemon:
             log.critical(msg)
             raise Exception(msg)
         self._cfg_path = cfg_path
+
+        self._group_by_label = None
 
         try:
             self._bind_address, self._bind_port = self.read_config()
@@ -106,6 +86,15 @@ class Daemon:
                 del c
 
         self._clients.append(client)
+        self._registry.register(client)
+
+    @property
+    def clients(self) -> List[Client]:
+        return self._clients
+
+    @property
+    def registry(self) -> CollectorRegistry:
+        return self._registry
 
     def run(self) -> None:
         '''
@@ -135,6 +124,7 @@ class Daemon:
                         log.info(f'Client {client} has no connection')
 
                 else:
+                    print(generate_latest(client).decode('utf-8'))
                     sockets.append(client.socket)
                     client.refresh()
 
@@ -192,6 +182,12 @@ class Daemon:
         if 'bind_port' not in cfg:
             raise ConfigError('bind_port not found')
 
+        # TODO validate
+        if 'group_by_label' in cfg:
+            group_by_label = cfg['group_by_label']
+        else:
+            group_by_label = None
+
         if 'clients' not in cfg:
             log.warning('No clients in config')
         else:
@@ -208,6 +204,9 @@ class Daemon:
                 # TODO error handling
                 cl_cfg = ClientSettings(**c_conf)
                 # self._clients.append(Client(cl_cfg))
-                self.add_client(Client(cl_cfg))
+                self.add_client(Client(cl_cfg, group_by_label))
 
         return cfg['bind_address'], cfg['bind_port']
+
+
+DAEMON = None
