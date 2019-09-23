@@ -26,8 +26,8 @@ class Client:
         self._buf: bytes = b''
         self._connected: bool = False
         self._clients: List[ClientInfo] = list()
-        self._ts_last_query: datetime.datetime = datetime.datetime.min
-        self._ts_last_connect_attempt: datetime.datetime = datetime.datetime.min
+        self._ts_last_query: datetime.datetime = datetime.datetime.utcnow() - datetime.timedelta(seconds=self._config.refresh_interval_seconds)
+        self._ts_last_connect_attempt: datetime.datetime = datetime.datetime.utcnow() - datetime.timedelta(seconds=self._config.refresh_interval_seconds)
         self._parse_errors: int = 0
         # indicates if a query waits for answer
         self._in_flight = False
@@ -55,8 +55,16 @@ class Client:
         return self._ts_last_connect_attempt
 
     @property
+    def last_query(self) -> datetime.datetime:
+        return self._ts_last_query
+
+    @property
     def refresh_interval(self) -> int:
         return self._config.refresh_interval_seconds
+
+    @property
+    def client_count(self) -> int:
+        return len(self._clients)
 
     @property
     def registry(self) -> CollectorRegistry:

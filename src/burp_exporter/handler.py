@@ -1,14 +1,17 @@
 
 
-from http.server import HTTPServer
-from prometheus_client import CollectorRegistry, MetricsHandler, generate_latest, CONTENT_TYPE_LATEST
+import logging
+import threading
+from pkg_resources import get_distribution
+from prometheus_client import CollectorRegistry, generate_latest, MetricsHandler, CONTENT_TYPE_LATEST
+from prometheus_client.exposition import _ThreadingSimpleServer
 from prometheus_client.metrics_core import Metric
 from prometheus_client.utils import floatToGoString
-from sockserver import ThreadingMixIn
-from typing import Dict, List, Optional
+from typing import List, Optional
 from urllib.parse import parse_qs, urlparse
 
-from .daemon import DAEMON
+DAEMON = None
+log = logging.getLogger('burp_exporter.handler')
 
 
 def generate(registries: List[CollectorRegistry], label_group: Optional[str] = None, label_value: Optional[str] = None) -> bytes:
@@ -39,12 +42,14 @@ def generate(registries: List[CollectorRegistry], label_group: Optional[str] = N
         return '{0}{1} {2}{3}\n'.format(
             line.name, labelstr, floatToGoString(line.value), timestamp)
 
+    log.debug(f'generate({registries}, {label_group}, {label_value}')
     output: List[str] = list()
     for registry in registries:
         for metric in registry.collect():
+            print(metric)
             try:
                 mname = metric.name
-                mtype = metric.tyoe
+                mtype = metric.type
                 # Munging from OpenMetrics into Prometheus format
                 if mtype == 'counter':
                     mname += '_total'
@@ -76,14 +81,14 @@ def generate(registries: List[CollectorRegistry], label_group: Optional[str] = N
                                         break
                                 else:
                                     output.append(sample_line(s))
+                    else:
+                        for suffix in ['_created', '_gsum', 'gcount']:
+                            if s.name == metric.name + suffix:
+                                # OpenMetrics specific sample, but in a gauge at the end.
+                                om_samples.setdefault(suffix, []).append(sample_line(s))
+                                break
                         else:
-                            for suffix in ['_created', '_gsum', 'gcount']:
-                                if s.name == metric.name + suffix:
-                                    # OpenMetrics specific sample, but in a gauge at the end.
-                                    om_samples.setdefault(suffix, []).append(sample_line(s))
-                                    break
-                            else:
-                                output.append(sample_line(s))
+                            output.append(sample_line(s))
             except Exception as exception:
                 exception.args = (exception.args or ('',)) + (metric,)
                 raise
@@ -95,31 +100,34 @@ def generate(registries: List[CollectorRegistry], label_group: Optional[str] = N
 
 
 class BurpHandler(MetricsHandler):
-    daemon = DAEMON
 
     def do_GET(self) -> None:
+        log.debug(f'do_GET {self.path}')
         path = urlparse(self.path).path
         params = parse_qs(urlparse(self.path).query)
         output: bytes = b''
         try:
             if path == '/':
                 self.send_welcome()
-            elif self.daemon is None:
+            elif DAEMON is None:
                 raise Exception('No daemon')
             elif path == '/probe':
                 if 'server[]' in params:
                     names = params['server[]']
                     registries: List[CollectorRegistry] = list()
-                    for clnt in self.daemon.clients:
+                    for clnt in DAEMON.clients:
                         if clnt.name in names:
-                            registries += clnt.registry
-                    output = generate_latest(registries=registries)
+                            registries.append(clnt.registry)
+                    output = generate(registries=registries)
                 elif 'label_name' in params and 'label_value' in params:
-                    output = generate_latest(registries=[self.daemon.registry], label_group=params['label_name'], label_value=params['label_value'])
+                    output = generate(registries=[DAEMON.registry], label_group=params['label_name'][0], label_value=params['label_value'][0])
+                else:
+                    # TODO this needs to 404 if restricting scraping
+                    output = generate(registries=[DAEMON.registry])
             elif path == '/metrics':
                 output = generate_latest(self.registry)
             else:
-                self.send_response(404, 'Endpoint not found')
+                self.send_error(404, 'Endpoint not found')
         except Exception as e:
             self.send_error(500, str(e))
         if output != b'':
@@ -129,19 +137,27 @@ class BurpHandler(MetricsHandler):
             self.wfile.write(output)
 
     def send_welcome(self) -> None:
+        log.debug('send_welcome')
         self.send_response(200)
         self.send_header('Content-Type', 'text/html')
         self.end_headers()
-        content = '''<html><head><title>Burp Exporter</title></head><body>
-    <h1>Burp Exporter</h1>
+        content = f'''<html><head><title>Burp Exporter</title></head><body>
+    <h1>Burp Exporter {get_distribution('burp_exporter').version}</h1>
+
+    <ul>
+        <li><a href="/metrics">/metrics</a> - state overview</a></li>
+        <li><a href="/probe">/probe</a> - all information</li>
+        <li>/probe?server[]=servername - limit by server</li>
+        <li>/probe?label_name=NAME&label_value=VALUE - limit by label NAME=VALUE, see <code>group_by_label</code></li>
+    </ul>
 
 </body></html>'''
-        self.wfile.write(content)
+        self.wfile.write(content.encode('utf-8'))
 
     def send_by_label(self, name: str, value: str) -> None:
-        if not self.daemon:
+        if not DAEMON:
             return
-        output = generate_latest(registries=self.daemon.registry, label_group=name, label_value=value)
+        output = generate(registries=DAEMON.registry, label_group=name, label_value=value)
         self.send_response(200)
         self.send_header('Content-Type', CONTENT_TYPE_LATEST)
         self.end_headers()
@@ -151,14 +167,21 @@ class BurpHandler(MetricsHandler):
         '''
         Sends the metrics from a list of servers (Client instances).
         '''
-        if not self.daemon:
+        if not DAEMON:
             return
         registries = list()
-        for clnt in self.daemon.clients:
+        for clnt in DAEMON.clients:
             if clnt.name in names:
                 registries.add(clnt)
-        output = generate_latest(registries=registries)
+        output = generate(registries=registries)
         self.send_response(200)
         self.send_headers('Content-Type', CONTENT_TYPE_LATEST)
         self.end_headers()
         self.wfile.write(output)
+
+
+def start_http_server(port: int, addr: str = '') -> None:
+    httpd = _ThreadingSimpleServer((addr, port), BurpHandler)
+    t = threading.Thread(target=httpd.serve_forever)
+    t.daemon = True
+    t.start()

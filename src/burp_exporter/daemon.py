@@ -5,10 +5,11 @@ import os
 import select
 import signal
 import yaml
-from prometheus_client import start_http_server as prometheus_start_http_server, MetricsHandler, generate_latest, CollectorRegistry
+from prometheus_client import CollectorRegistry, Gauge, MetricsHandler, generate_latest
 from typing import List, Tuple
 
 from .client import Client
+from .handler import start_http_server
 from .types import ClientSettings
 
 log = logging.getLogger('burp_exporter.daemon')
@@ -21,6 +22,10 @@ try:
 except ImportError:
     log.info('Not using systemd module')
     HAVE_SYSTEMD = False
+
+burp_last_contact = Gauge('burp_last_contact', 'Time when the burp server was last contacted', ['server'])
+burp_up = Gauge('burp_up', 'Shows if the connection to the server is up', ['server'])
+burp_clients = Gauge('burp_clients', 'Number of clients known to the server', ['server'])
 
 
 class ConfigError(Exception):
@@ -62,7 +67,7 @@ class Daemon:
 
         # start monitoring endpoint
         log.info(f'Binding monitoring to {self._bind_address}:{self._bind_port}')
-        prometheus_start_http_server(addr=str(self._bind_address), port=self._bind_port)
+        start_http_server(addr=str(self._bind_address), port=self._bind_port)
 
         if HAVE_SYSTEMD:
             log.info('Signaling readiness')
@@ -104,6 +109,9 @@ class Daemon:
             log.debug('begin main loop')
             sockets = list()
             for client in self._clients:
+                burp_last_contact.labels(client.name).set(client.last_query.replace(tzinfo=datetime.timezone.utc).timestamp())
+                burp_up.labels(client.name).set(client.connected)
+                burp_clients.labels(client.name).set(client.client_count)
                 if not client.connected:
                     if client.last_connect_attempt < datetime.datetime.utcnow() - datetime.timedelta(minutes=1):
                         log.debug(f'Last connection attempt for {client} was {client.last_connect_attempt}')
@@ -124,7 +132,7 @@ class Daemon:
                         log.info(f'Client {client} has no connection')
 
                 else:
-                    print(generate_latest(client).decode('utf-8'))
+                    # print(generate_latest(client).decode('utf-8'))
                     sockets.append(client.socket)
                     client.refresh()
 
@@ -207,6 +215,3 @@ class Daemon:
                 self.add_client(Client(cl_cfg, group_by_label))
 
         return cfg['bind_address'], cfg['bind_port']
-
-
-DAEMON = None
