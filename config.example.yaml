@@ -5,26 +5,12 @@ bind_address: 127.0.0.1
 # Port to bind the metrics endpoint to
 bind_port: 9645
 
-# Security mode, one of 'none', 'server', 'tag'
-# - "none" (or not set) means no security settings are applied
-# - "server" allows setting a username/password per server (see client section below)
-# - "tag" works like "server", except that it limits on a tag (selected using group_by_label)
-security: none
-
-# Group clients by label
-group_by_label: team
-
 # List of clients
 clients:
     # name of the client, used as target parameter
   - name: client1
 
     ## Server settings
-
-    # with "security: server", specify username/password combinations that may access these metrics
-    # credential_map:
-    #     user1: password1
-    #     user2: password2
 
     # Address of the burp server
     burp_host: 127.0.0.1

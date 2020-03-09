@@ -14,16 +14,13 @@ DAEMON = None
 log = logging.getLogger('burp_exporter.handler')
 
 
-def generate(registries: List[CollectorRegistry], label_group: Optional[str] = None, label_value: Optional[str] = None) -> bytes:
+def generate(registries: List[CollectorRegistry]) -> bytes:
     '''
-    Generate output from the given registries. If `label_group` is a string, limits the output to labels having that
-    name and the value `label_value`
+    Generate output from the given registries.
 
     This function is based on `prometheus_client.exposition.generate_latest`.
 
     :param registries: Registries to use as data source
-    :param label_group: If set, restricts output to labels of that group name, see also `label_value`.
-    :param label_value: If this and `label_group` are set, restricts the output to the label value.
     :return: The generated string.
     '''
 
@@ -42,11 +39,9 @@ def generate(registries: List[CollectorRegistry], label_group: Optional[str] = N
         return '{0}{1} {2}{3}\n'.format(
             line.name, labelstr, floatToGoString(line.value), timestamp)
 
-    log.debug(f'generate({registries}, {label_group}, {label_value}')
     output: List[str] = list()
     for registry in registries:
         for metric in registry.collect():
-            print(metric)
             try:
                 mname = metric.name
                 mtype = metric.type
@@ -71,24 +66,13 @@ def generate(registries: List[CollectorRegistry], label_group: Optional[str] = N
 
                 om_samples = {}
                 for s in metric.samples:
-                    if label_group:
-                        if label_group in s.labels.keys():
-                            if s.labels[label_group] == label_value:
-                                for suffix in ['_created', '_gsum', 'gcount']:
-                                    if s.name == metric.name + suffix:
-                                        # OpenMetrics specific sample, but in a gauge at the end.
-                                        om_samples.setdefault(suffix, []).append(sample_line(s))
-                                        break
-                                else:
-                                    output.append(sample_line(s))
+                    for suffix in ['_created', '_gsum', 'gcount']:
+                        if s.name == metric.name + suffix:
+                            # OpenMetrics specific sample, but in a gauge at the end.
+                            om_samples.setdefault(suffix, []).append(sample_line(s))
+                            break
                     else:
-                        for suffix in ['_created', '_gsum', 'gcount']:
-                            if s.name == metric.name + suffix:
-                                # OpenMetrics specific sample, but in a gauge at the end.
-                                om_samples.setdefault(suffix, []).append(sample_line(s))
-                                break
-                        else:
-                            output.append(sample_line(s))
+                        output.append(sample_line(s))
             except Exception as exception:
                 exception.args = (exception.args or ('',)) + (metric,)
                 raise
@@ -119,10 +103,7 @@ class BurpHandler(MetricsHandler):
                         if clnt.name in names:
                             registries.append(clnt.registry)
                     output = generate(registries=registries)
-                elif 'label_name' in params and 'label_value' in params:
-                    output = generate(registries=[DAEMON.registry], label_group=params['label_name'][0], label_value=params['label_value'][0])
                 else:
-                    # TODO this needs to 404 if restricting scraping
                     output = generate(registries=[DAEMON.registry])
             elif path == '/metrics':
                 output = generate_latest(self.registry)
@@ -148,20 +129,10 @@ class BurpHandler(MetricsHandler):
         <li><a href="/metrics">/metrics</a> - state overview</a></li>
         <li><a href="/probe">/probe</a> - all information</li>
         <li>/probe?server[]=servername - limit by server</li>
-        <li>/probe?label_name=NAME&label_value=VALUE - limit by label NAME=VALUE, see <code>group_by_label</code></li>
     </ul>
 
 </body></html>'''
         self.wfile.write(content.encode('utf-8'))
-
-    def send_by_label(self, name: str, value: str) -> None:
-        if not DAEMON:
-            return
-        output = generate(registries=DAEMON.registry, label_group=name, label_value=value)
-        self.send_response(200)
-        self.send_header('Content-Type', CONTENT_TYPE_LATEST)
-        self.end_headers()
-        self.wfile.write(output)
 
     def send_by_server(self, names: List[str]) -> None:
         '''

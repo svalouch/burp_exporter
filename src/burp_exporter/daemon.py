@@ -47,8 +47,6 @@ class Daemon:
             raise Exception(msg)
         self._cfg_path = cfg_path
 
-        self._group_by_label = None
-
         try:
             self._bind_address, self._bind_port = self.read_config()
         except ConfigError as e:
@@ -190,12 +188,6 @@ class Daemon:
         if 'bind_port' not in cfg:
             raise ConfigError('bind_port not found')
 
-        # TODO validate
-        if 'group_by_label' in cfg:
-            group_by_label = cfg['group_by_label']
-        else:
-            group_by_label = None
-
         if 'clients' not in cfg:
             log.warning('No clients in config')
         else:
@@ -212,6 +204,6 @@ class Daemon:
                 # TODO error handling
                 cl_cfg = ClientSettings(**c_conf)
                 # self._clients.append(Client(cl_cfg))
-                self.add_client(Client(cl_cfg, group_by_label))
+                self.add_client(Client(cl_cfg))
 
         return cfg['bind_address'], cfg['bind_port']
